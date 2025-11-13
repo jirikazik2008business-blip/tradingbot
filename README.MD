@@ -277,19 +277,28 @@ Lot size = fixní procento equity a vzdálenost SL.
 
 ## Discord příkazy
 
-| Příkaz         | Funkce                 |
-| -------------- | ---------------------- |
-| `!status`      | stav MT5, trading mode |
-| `!balance`     | equity / balance       |
-| `!performance` | winrate, RR            |
-| `!calendar`    | nadcházející news      |
-| `!zones`       | SR graf                |
-| `!log x`       | posledních x logů      |
-| `!restart`     | restart robota         |
-| `!tradingmode` | notify/live            |
-| `!health  `    | aktualni vyuziti PC    |
-| `!settings`    | zobrazí nastavení bota |
-| `!alerts`      | alerty o pohybu ceny   |
+| Příkaz           | Funkce                                      |
+| ---------------- | -------------------------------------------- |
+| `!stats`         | Zobrazí statistiky obchodování               |
+| `!balance`       | Zobrazí informace o účtu                     |
+| `!positions`     | Zobrazí otevřené pozice                      |
+| `!quote`         | Zobrazí aktuální ceny pro symbol             |
+| `!zones`         | Zobrazí cenové zóny pro symbol               |
+| `!alerts`        | Správa cenových alertů                       |
+| `!risk`          | Zobrazí risk management informace            |
+| `!calendar`      | Zobrazí ekonomický kalendář                  |
+| `!settings`      | Zobrazí aktuální nastavení                   |
+| `!health`        | Zobrazí zdraví systému                       |
+| `!system`        | Detailní systémové informace                 |
+| `!backup`        | Vytvoří backup konfigurace                   |
+| `!export`        | Exportuje data                               |
+| `!restart`       | Restartuje bota (admin only)                 |
+| `!log`           | Zobrazí logy (admin only)                    |
+| `!tradingmode`   | Nastaví trading mód (live/notify)            |
+| `!performance`   | Zobrazí performance metriky                  |
+| `!comment`       | Zobrazí náhodný komentář/motivaci            |
+| `!myid`          | Zobrazí tvé Discord ID                       |
+| `!closeposition` | Uzavře pozici (admin only)                   |
 
 
 ---
@@ -424,4 +433,5 @@ Ano, úprava `.env → SYMBOLS`.
 ## Licence
 
 Pouze pro osobní výzkum a výuku.
+
 
