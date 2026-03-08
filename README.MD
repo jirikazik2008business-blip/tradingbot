@@ -1,437 +1,309 @@
+# Trading Bot — Swing Strategy (ICT/SMC)
 
-# Trading Bot
+## Sekce 1 — Přehled systému
 
-# **MT5 Automatic Trading System**
+Moderní algoritmický trading bot navržený pro automatizované obchodování na platformě MetaTrader 5, s primárním zaměřením na splnění podmínek a správu kapitálu u prop-firem (např. FTMO). Systém implementuje pokročilou **Swing strategii** postavenou na konceptech institucionálního obchodování (Inner Circle Trader / Smart Money Concepts), využívající detekci Supply/Demand zón, Market Structure Shift (MSS) a likvidity. Bot obsahuje robustní modul správy rizik, automatizovaný deník obchodů, Discord notifikace a interaktivní webový dashboard pro sledování výkonnosti v reálném čase.
 
-Plně automatický systém pro trading přes MetaTrader 5 s řízením rizika, high-impact news filtrem a Discord monitoringem.
-
----
-
-## Funkce
-
-* Multi-TF price-action systém: D1-H4-H1-M30-M5
-* SR zóny, wick rejection, engulfing, FVG
-* NY session only
-* MT5 auto-execution
-* Max trades/day, DD guard, spread filter
-* Web scraping + MT5 calendar
-* Discord kontrola, příkazy, restart
-* Self-heal bezpečnostní restart
-
----
-
-## Požadavky
-
-| Komponenta | Verze         |
-| ---------- | ------------- |
-| OS         | Windows 10/11 |
-| Python     | 3.10+         |
-| MetaTrader | MT5           |
+| Vlastnost | Hodnota |
+|---|---|
+| Jazyk | Python 3.10+ |
+| Broker připojení | MetaTrader 5 (přes `MetaTrader5` Python package) |
+| Strategie | Swing (ICT/SMC koncepty) + SMT divergence |
+| Obchodované páry | EURUSD, GBPUSD, USDJPY, USDCAD, AUDUSD, NZDUSD |
+| Timeframe vstupu | H1 |
+| Analytické TF | D1 (zóny, trend), H4 (trend), H1 (entry), M30 (konfirmace) |
+| Session | New York 13:00–17:00 UTC |
+| Notifikace | Discord bot |
+| Dashboard | WebSocket server + Cloudflare tunnel |
+| Persistence | SQLite (`db/trades.db`) + `state.json` |
+| Konfigurace | `.env` soubor |
 
 ---
 
-## Instalace
-
-### **1. Instalace Pythonu**
-
-* stáhni z python.org
-* během instalace zaškrtni **Add to PATH**
-* ověření:
+## Sekce 2 — Struktura projektu
 
 ```
-python --version
-```
-
-### **2. Instalace VSCode**
-
-* stáhni z code.visualstudio.com
-* extensions:
-
-  * Python
-  * Pylance
-
----
-pip install -r requirements.txt                    nainstaluje knihovny
-
-python -m pip freeze | % { $_.split('==')[0] } | % { python -m pip uninstall -y $_ }        odinstaluje vsechny knihovny
-
-python -m pip cache purge                       odstrani cache a mezipamet po zbyvajicich knihovnach
-
-
-
-### **3. Instalace MetaTrader 5**
-
-#### Stažení
-
-* z oficiálních stránek nebo vývojáře brokera
-
-#### Přihlášení
-
-* založ demo nebo reálný účet
-* zapni:
-
-`Tools → Options → Expert Advisors → Allow automated trading`
-
-#### Ověř síť
-
-Terminál MT5 musí být spuštěný **před botem**.
-
----
-
-### **4. Přidání symbolů**
-
-Otevři MT5 → Market Watch → klik pravým:
-
-`Symbols → enable páry které obchoduješ`
-
----
-
-### **5. Git projekt / stažení kódu**
-
-Extrahuj projekt do složky:
-
-```
-C:\Users\Jiras\OneDrive\Plocha\ftmo          napriklad, kod si muzes umistit kamkoliv
+ftmo/
+├── main.py                   # Hlavní vstupní bod, trading loop, orchestrace vláken
+├── config.py                 # Načítání .env, dataclassy AppConfig, validace
+├── models.py                 # Datové modely: TradePlan, TradeResult, TradeDirection
+├── data.py                   # MT5 wrapper pro fetch_rates() s lru_cache a retry logikou
+├── executor.py               # TradeManager — vysoká úroveň správy exekuce (cooldown, startup protection)
+├── trade.py                  # TradeExecutor — nízkoúrovňová MT5 exekuce, BE, Trailing SL, Partial TP
+├── risk.py                   # Výpočty lotů, risk_gates_ok (drawdown/loss limity), spread check
+├── position_watcher.py       # Scanování historie MT5 a synchronizace stavu
+├── metrics.py                # PnL kalkulace, Sharpe ratio, winrate, broker-time offset synchronizace
+├── optimizer.py              # StrategyOptimizer — Walk-Forward Optimization ATR multiplikátorů
+├── state_manager.py          # Synchronní a asynchronní persistence stavu do state.json
+├── notifications.py          # Abstrakce notifikací s rate-limiterem
+├── discord_bot.py            # Discord integrace, příkazy, alerts loop, message queue
+├── status_display.py         # Terminálový dashboard a WebSocket session status
+├── live_alerts.py            # Monitorovací smyčka pro kritické drawdowny a winrate upozornění
+├── comments.py               # Generátor náhodných komentářů k obchodům
+├── image_generator.py        # Generování vizualizací statistik a Supply/Demand zón
+├── monitoring.py             # Monitorování systémových prostředků (RAM/CPU)
+├── runtime_store.py          # In-memory úložiště pro změny konfigurace za běhu
+├── logger.py                 # Rotační logging systém, structured logs (JSON)
+├── analysis/
+│   ├── zones.py              # Detekce Supply/Demand zón filtrem lokálních extrémů a shlukování
+│   ├── volume.py             # Analýza FVG a Equilibrium (50% retracement)
+│   ├── mtf.py                # Multi-Timeframe trend analýza (Weekly, Daily, H4)
+│   └── econ_calendar.py      # EconomicCalendar — scraping zpráv z Forex Factory / Myfxbook
+├── strategy/
+│   ├── __init__.py           # Factory pro výběr strategie (SWING/SMT)
+│   ├── swing_strategy.py     # Implementace 7-úrovňového Swing filtru
+│   ├── mss_strategy.py       # Market Structure Shift, Liquidity Sweep a Swing Points
+│   └── smt_strategy.py       # SMT Divergence (korelace ES/NQ)
+├── db/
+│   ├── dao.py                # SQLite Data Access Object pro tabulku trades
+│   ├── migrate.py            # Skript pro inicializaci a migrace schématu
+│   └── migrations/           # SQL skripty pro schema
+└── logs/                     # Denní logy aplikace
 ```
 
 ---
 
-### **6. Instalace Python knihoven**
+## Sekce 3 — Architektura a tok dat
 
-V projektu spusť:
-
-```
-pip install -r requirements.txt
-```
-
----
-
-## .env konfigurace
-
-vypln informace v .env
-
-### Nutné proměnné
+### 3.1 Diagram spuštění (ASCII)
 
 ```
-MT5_LOGIN=xxxx
-MT5_PASSWORD=xxxx
-MT5_SERVER=Broker-Server
-SYMBOLS=EURUSD,GBPUSD,USDJPY
-RISK_PER_TRADE=0.01
-MAX_TRADES_PER_DAY=4
-COMMENTS_DIR=./comments
-NEWYORK_START=14:30
-NEWYORK_END=21:00
-SELF_RESTART=true
+main.py __name__=="__main__"
+    └─► main_entrypoint()
+            ├─► load_config()
+            ├─► TradeManager.__init__()
+            ├─► watchdog_thread [daemon]
+            ├─► trading_loop() [daemon thread]
+            │       └─► [každých 60s pro každý symbol]
+            │               ├─► build_plan(symbol)
+            │               ├─► risk_gates_ok()
+            │               ├─► TradeManager.execute_plan()
+            │               ├─► trade_executor.manage_open_positions()
+            │               └─► scan_history_and_update()
+            ├─► WebSocket server [background thread]
+            └─► discord_bot.run_bot() [blocking — main thread]
 ```
 
-### Discord
+### 3.2 Vlákna a jejich zodpovědnosti
+
+| Vlákno | Funkce | Typ | Co dělá |
+|---|---|---|---|
+| main thread | `discord_bot.run_bot()` | blocking | Spouští asyncio event loop pro Discord bota a příkazy. |
+| trading-thread | `trading_loop()` | daemon | Hlavní smyčka — skenování trhu, exekuce plánů, správa pozic. |
+| watchdog | `watchdog_thread_func()` | daemon | Sleduje heartbeat `main.py`, provádí restart při zamrznutí logic threadu. |
+| ws-server | `websocket_server.start_background_thread()` | daemon | Obsluhuje dashboard přes WebSocket pro real-time status. |
+| optimizer | `StrategyOptimizer.run_optimization()` | daemon | Běží v pozadí při splnění podmínek triggeru (čas, volatilita, winrate). |
+
+### 3.3 Tok zpráv — notifikace
 
 ```
-DISCORD_BOT_TOKEN=
-DISCORD_CHANNEL_ID=
-BOT_OWNER_ID=
-```
-
----
-
-## Vytvoření bota
-Udělení oprávnění pro čtení/posílání zpráv a získat token + channel ID.
-
-1. Vytvoření aplikace a bota (Discord Developer Portal)
-   1.1 Otevři: [https://discord.com/developers/applications](https://discord.com/developers/applications)
-   1.2 Klikni „New Application“. Dej název. Ulož.
-   1.3 V levém menu zvol „Bot“. Klikni „Add Bot“ → „Yes, do it“.
-   1.4 Pod položkou Bot najdeš „TOKEN“ (Click to Reveal). **Token si ulož**.
-
-   * Nikomu ho nedávej. Pokud se token kompromituje, Regenerate.
-
-2. Povolení intents (důležité)
-   2.1 Na téže stránce Bot najdi sekci „Privileged Gateway Intents“.
-   2.2 Zapni **Message Content Intent** (nutné pro čtení obsahu příkazů).
-   2.3 Pokud chceš shromažďovat členy, zapni také Presence / Server Members podle potřeby.
-   2.4 Klikni Save Changes.
-
-3. Nastavení oprávnění (OAuth2 invite)
-   3.1 V levém menu otevři „OAuth2“ → „URL Generator“.
-   3.2 V „SCOPES“ zaškrtni: **bot**, případně **applications.commands** (pokud chceš slash příkazy).
-   3.3 V části „BOT PERMISSIONS“ vyber přesně:
-
-   * View Channels
-   * Read Message History
-   * Send Messages
-   * Embed Links
-   * Attach Files
-   * Manage Messages (volitelně, pokud chceš mazat zprávy)
-   * Add Reactions (volitelně)
-   * Use External Emojis (volitelně)
-     3.4 Zkopíruj vygenerovaný URL, otevři ho v prohlížeči, vyber server a přidej bota.
-
-Poznámka: pokud nechceš riskovat, použij jen Body: View, Read, Send.
-
-4. Získání Channel ID (kam bude bot posílat)
-   4.1 V Discord klientu jdi do User Settings → Advanced → zapni **Developer Mode**.
-   4.2 Pravým tlačítkem na kanál → „Copy ID“. To je `DISCORD_CHANNEL_ID`.
-   4.3 Pokud chceš bot do více kanálů, můžeš použít více ID nebo nechat bot reagovat globálně.
-
-5. Uložení do .env
-   Do projektu vlož / uprav `.env`:
-
-```
-DISCORD_TOKEN=tvuj_token_z_developer_portalu
-DISCORD_CHANNEL_ID=123456789012345678
-
-```
-6. Nastavení v kódu (ověření intentu)
-   6.1 V kódu při tvorbě bota musíš povolit `message_content` intent:
-
-```py
-intents = discord.Intents.default()
-intents.message_content = True
-bot = commands.Bot(command_prefix="!", intents=intents)
-```
-
-6.2 Zajisti, že v Developer Portalu je Message Content Intent povolený. Jinak bot sice poběží, ale příkazy nečetl.
-
-7. Testování bota
-   7.1 Spusť `python discord_bot.py` nebo spuštění přes `main.py`.
-   7.2 Na serveru napiš `!myid`. Bot by měl odpovědět s tvým ID.
-   7.3 Napiš `!status`. Bot odešle přehled stavu.
-   7.4 Pokud nedostaneš odpověď:
-
-* Zkontroluj token v `.env`.
-* Zkontroluj, že bot má oprávnění posílat zprávy v kanálu.
-* Zapni v DevPortalu Message Content Intent.
-* Zkontroluj konzoli bota pro chyby.
-
-8. Dodatečné bezpečnostní a provozní kroky
-   8.1 Token nikdy neposílej veřejně. Pokud unikne, v Dev Portal zvol „Regenerate“.
-   8.2 Pro produkci dej bota do vlastního Discord serveru nebo jen omezeného kanálu.
-   8.3 Pokud nasazuješ na VPS, nastav systemd/tmux/screen aby bot běžel non-stop.
-   8.4 Doporučené logs: povolit logování do souboru (máš `logs/`) a rotovat.
-
-9. Checklist před spuštěním
-
-* MT5 běží a je přihlášený do stejného účtu jako v `.env` (MT5_LOGIN apod.).
-* `.env` obsahuje `DISCORD_TOKEN` a `DISCORD_CHANNEL_ID`.
-* Bot je pozván na server a má oprávnění pro daný kanál.
-* V Dev Portal povolen `Message Content Intent`.
-* V kódu intents nastaveny (`intents.message_content = True`).
-* Logy fungují, případné chyby kontroluj v `logs/discord_bot.log` nebo v konzoli.
-
----
-
-Krátký troubleshooting:
-
-* Bot online v Dev Portal ale nereaguje → chybí Message Content Intent nebo chybné intents v kódu.
-* Bot nereaguje v konkrétním kanálu → zkontroluj práva kanálu (Send Messages, View Channel).
-* `Missing Permissions` v konzoli → uprav role bota na serveru nebo pozvi znovu s vyššími oprávněními.
-* Channel ID = 0 nebo prázdné → zkopíruj ID správně (Developer Mode).
-
-Pokud chceš, přidám do README i příklad invite URL s doporučenými permisemi a přesný screenshot-by-screenshot průvodce (popíšu textově nebo ti vygeneruji obrázkové kroky). Chceš to do README jako text nebo jako inline sekci se screenshoty?
-
-
-## Spuštění
-
-```
-python main.py
-```
-
-Terminál/logs musí ukázat:
-
-```
-MT5 initialized and logged in.
-Trading loop started.
-Starting Discord bot.
+trading_loop / discord_command
+    └─► notifications.notify_*()
+            └─► _post_discord()
+                    └─► _sender(content)   ← funkce nastavená přes set_sender()
+                            └─► asyncio queue (discord_bot._message_queue)
+                                    └─► sender_loop [tasks.loop(seconds=2)]
+                                            └─► discord_channel.send()
 ```
 
 ---
 
-## Strategie — Přehled
+## Sekce 4 — Konfigurace (.env)
 
-### Timeframe logika
-
-| TF     | Účel               |
-| ------ | ------------------ |
-| D1     | hlavní trend       |
-| H4     | swing bias         |
-| H1/M30 | momentum potvrzení |
-| M5     | vstupní trigger    |
-
-### Podmínky vstupu
-
-* Cena testuje validní D1 S/R zónu
-* ATR tolerance
-* Min. počet dotyků (D1+W)
-* Bull/bear rejection nebo engulfing
-* FVG detekce
-* Higher TF potvrzení
-* Spread OK
-* Risk OK
-
-### Výpočet risku
-
-Lot size = fixní procento equity a vzdálenost SL.
-
----
-
-## Discord příkazy
-
-| Příkaz           | Funkce                                      |
-| ---------------- | -------------------------------------------- |
-| `!stats`         | Zobrazí statistiky obchodování               |
-| `!balance`       | Zobrazí informace o účtu                     |
-| `!positions`     | Zobrazí otevřené pozice                      |
-| `!quote`         | Zobrazí aktuální ceny pro symbol             |
-| `!zones`         | Zobrazí cenové zóny pro symbol               |
-| `!alerts`        | Správa cenových alertů                       |
-| `!risk`          | Zobrazí risk management informace            |
-| `!calendar`      | Zobrazí ekonomický kalendář                  |
-| `!settings`      | Zobrazí aktuální nastavení                   |
-| `!health`        | Zobrazí zdraví systému                       |
-| `!system`        | Detailní systémové informace                 |
-| `!backup`        | Vytvoří backup konfigurace                   |
-| `!export`        | Exportuje data                               |
-| `!restart`       | Restartuje bota (admin only)                 |
-| `!log`           | Zobrazí logy (admin only)                    |
-| `!tradingmode`   | Nastaví trading mód (live/notify)            |
-| `!performance`   | Zobrazí performance metriky                  |
-| `!comment`       | Zobrazí náhodný komentář/motivaci            |
-| `!myid`          | Zobrazí tvé Discord ID                       |
-| `!closeposition` | Uzavře pozici (admin only)                   |
-
+| Proměnná | Typ | Default | Popis |
+|---|---|---|---|
+| `MT5_LOGIN` | int | — | Přihlašovací číslo MT5 účtu. |
+| `MT5_PASSWORD` | str | — | Heslo MT5 účtu. |
+| `MT5_SERVER` | str | — | Název brokera (např. `FTMO-Demo`). |
+| `MT5_PATH` | str | — | Cesta k `terminal64.exe`. |
+| `APP_MODE` | str | `offline` | `live` = vyžaduje MT5; `offline` = Discord/backtest bez MT5. |
+| `STRATEGY` | str | `SWING` | Vybraná strategie: `SWING` nebo `SMT`. |
+| `SYMBOLS` | str | `EURUSD` | Čárkou oddělený seznam symbolů pro trading. |
+| `ENTRY_TFS` | str | `H1` | Timeframe pro vstupní signál. |
+| `POSITION_MODE` | str | `PERCENT` | Metoda výpočtu lotů: `% equity` nebo `fixní`. |
+| `RISK_PCT` | float | `0.03` | Riziko na obchod (0.01 = 1% equity). |
+| `MAX_RISK_PER_TRADE_PCT` | float | `0.005` | Bezpečnostní hard limit rizika. |
+| `FAT_FINGER_MAX_LOTS` | float | `2.0` | Absolutní maximum lotů jedné pozice. |
+| `MAX_DRAWDOWN_PCT` | float | `0.03` | Limit celkového drawdownu (zastaví bota). |
+| `MAX_DAILY_LOSS_PCT` | float | `0.008` | Limit denní ztráty vyhodnocovaný z deníku. |
+| `MAX_WEEKLY_DRAWDOWN` | float | `0.02` | Limit týdenního drawdownu. |
+| `MAX_MONTHLY_DRAWDOWN` | float | `0.03` | Limit měsíčního drawdownu. |
+| `CONSECUTIVE_LOSS_LIMIT` | int | `3` | Stop-loss pro obchodování po sérii ztrát. |
+| `MAX_SPREAD_PIPS` | float | `2.5` | Maximální povolený spread pro vstup. |
+| `MAX_POSITIONS_PER_SYMBOL` | int | `2` | Počet povolených pozic na jeden pár. |
+| `MAX_TRADES_PER_DAY` | int | `10` | Maximální počet obchodů za den. |
+| `USE_TRAILING` | bool | `false` | Povolení Trailing Stopu. |
+| `TRAILING_R_MULT` | float | `0.5` | Vzdálenost trailingu v R-multu. |
+| `BREAKEVEN_RR` | float | `1.5` | Úroveň RR pro posun na Break-Even. |
+| `PARTIAL_TP_ENABLED` | bool | `true` | Povolení částečného uzavírání zisku. |
+| `PARTIAL_TP_RR` | float | `1.0` | Úroveň RR pro první partial TP. |
+| `PARTIAL_TP_PERCENT` | float | `50` | Kolik % pozice se má zavřít při partial TP. |
+| `USE_LIMIT_ORDERS` | bool | `false` | Používat Buy/Sell Limit místo Market. |
+| `SL_POINTS` | int | `200` | Fixní SL v bodech (0 = strategický SL). |
+| `TP_POINTS` | int | `400` | Fixní TP v bodech. |
+| `SL_MULTIPLIER` | float | `2.5` | ATR násobič pro SL (použito optimizerem). |
+| `TP_MULTIPLIER` | float | `4.0` | ATR násobič pro TP (použito optimizerem). |
+| `NEWYORK_START` | str | `13:00` | Start trading okna (Broker/UTC). |
+| `NEWYORK_END` | str | `17:00` | Konec trading okna (Broker/UTC). |
+| `POLL_INTERVAL_SECONDS` | int | `60` | Čekání mezi cykly trading loopu. |
+| `CONSOLIDATION_ENABLED` | bool | `true` | Globální filtr tržní konsolidace. |
+| `NEWS_LOOKAHEAD_MIN` | int | `120` | Kolik minut před zprávou neobchodovat. |
+| `TRADE_ENABLED` | bool | `true` | Master switch pro vypnutí obchodování. |
+| `START_WEBSOCKET` | int | `1` | Povolení dashboardu. |
+| `DISCORD_TOKEN` | str | — | Token pro Discord bota. |
 
 ---
 
-## Struktura projektu
+## Sekce 5 — Moduly — detailní reference
 
-```
-📁 PROJECT_ROOT/
-├── 📁 analysis/
-│   ├── mtf.py
-│   ├── volume.py
-│   ├── zones.py
-│   └── entry.py
-├── 📁 assets/
-│   ├── 📁 backgrounds/
-│   ├── Montserrat-Bold.tlf
-│   └──README.md
-├── 📁 backtest/
-├── 📁 comments/
-│   ├── takeprofit.txt
-│   ├── stoploss.txt
-│   ├── motivation.txt
-│   ├── buy.txt
-│   └── sell.txt
-├── 📁 features/
-│   ├── 📁 gamesy/
-│   ├── 📁 env/ kalkulacky
-│   ├── barvy.html
-│   ├── cas.py
-│   ├── csv-data.py
-│   ├── diag.py
-│   ├── kalkulacka.py
-│   ├── README.md
-│   ├── stats.py (nepouzivano/nefunkcni)
-│   └── test.py  (nepouzivano/nefunkcni)
-├── 📁 logs/
-├── 📁 strategy/
-│   ├── __init__.py
-│   ├── swing_strategy.py
-│   └── utils.py
-├── 📁 env/
-├── comments.py
-├── config.py
-├── data.py
-├── discord_bot.py
-├── executor.py
-├── image_generator.py
-├── logger.py
-├── main.py
-├── metrics.py
-├── monitoring.py
-├── notifications.py
-├── position_watcher.py
-├── README.MD
-├── requirements.txt
-├── risk.py
-├── trade.py
-├── utils.py
-└── watchdog.py
-```
+#### `main.py`
+**Zodpovědnost:** Hlavní mozek aplikace, provádí orchestraci všech vláken, zajišťuje inicializaci MT5 a spravuje hlavní obchodní smyčku `trading_loop`.
+**Veřejné API:** `main_entrypoint()` — inicializuje bota. `trading_loop()` — prochází symboly, volá buildery plánů a exekutory.
+**Důležité chování:** Obsahuje `self-restart` logiku na základě memory limitu a watchdogu.
+
+#### `config.py`
+**Zodpovědnost:** Načítání konfigurace z `.env` a její validace.
+**Veřejné API:** `load_config()`, `reload_config()`.
+**Důležité chování:** Exportuje globální instanci `config`, která je sdílena napříč aplikací (i když se v každém modulu importuje nově).
+
+#### `data.py`
+**Zodpovědnost:** Nízkoúrovňová komunikace s MT5 API.
+**Veřejné API:** `fetch_rates(symbol, tf, bars)` — vrací DataFrame.
+**Důležité chování:** Používá `@lru_cache` pro rychlé opakované dotazy a `mt5_retry` dekorátor pro ošetření dočasných výpadků spojení.
+
+#### `executor.py` (TradeManager)
+**Zodpovědnost:** Logika vyšší úrovně nad exekucí.
+**Veřejné API:** `execute_plan(plan)` — hlavní brána pro otevření obchodu.
+**Důležité chování:** Implementuje `startup protection` (čekání N barů po startu) a `cooldown` mezi obchody na stejném symbolu.
+
+#### `trade.py` (TradeExecutor)
+**Zodpovědnost:** Konkrétní MT5 odesílání orders a správa otevřených pozic.
+**Veřejné API:** `place_trade()`, `manage_open_positions()`.
+**Důležité chování:** Zajišťuje logiku trailing stopu, break-even a partial TP bleskovými modifikacemi tiketů.
+
+#### `optimizer.py`
+**Zodpovědnost:** Automatizovaná Walk-Forward optimalizace ATR multiplikátorů.
+**Veřejné API:** `run_optimization()`, `should_run_optimization()`.
+**Důležité chování:** Implementuje fitness funkci založenou na Sharpe Ratio R-násobků a multi-point grid search.
 
 ---
 
-## Typický flow
+## Sekce 6 — Swing strategie — kompletní rozhodovací logika
 
-1. Bot načte price data z MT5
-2. Analyzuje D1-H4-H1-M30-M5
-3. Identifikuje S/R zone touch
-4. Test reversalu a continuation
-5. Výpočet lot size
-6. Spread check
-7. Risk gates
-8. Vstup nebo skip
-9. Řízení pozice
-10. Update logů a Discordu
+### 6.1 Vstupní podmínky (7 filtrů v pořadí)
 
----
+**Filtr 1 — Zone Touch**
+- Bot načte denní zóny (D1) a hledá, zda se aktuální cena nachází v toleranci zóny.
+- Tolerance: `max(ATR(14) * 0.25, price * 0.0006)`.
+- **Cíl:** Obchodovat pouze z míst, kde se očekává institucionální zájem.
 
-## Debug a testy
+**Filtr 2 — Zone Significance**
+- Zóna musí být "silná". Bot počítá dotyky zóny v historii.
+- **Podmínka:** Aspoň 3 dotyky na D1 grafech nebo 3 na týdenních (Weekly).
+- Pokud je zóna příliš čerstvá a neověřená, signál se ignoruje.
 
-### Test MT5 připojení
+**Filtr 3 — Entry Pattern (Reversal)**
+Na H1 timeframe bot hledá potvrzení směru:
+1. **Bullish/Bearish Engulfing**: Klasický pohlcující svíčkový pattern.
+2. **Rejection Wick**: Svíčka s dlouhým knotem signalizujícím odmítnutí ceny v zóně.
+3. **FVG (Fair Value Gap)**: Detekce nerovnováhy směrem od zóny.
 
-```
-python -c "import metatrader5 as mt5; print(mt5.initialize())"
-```
+**Filtr 4 — Multi-TF Trend Consensus**
+- Kontrola trendu na Weekly (SMA), Daily (SMA20) a H4 (SMA20).
+- Skutečný konsensus nastává, pokud většina TF souhlasí s detekovaným patternem.
 
-### Test knihoven
+**Filtr 5 — H1/M30 Confirmation**
+- Musí existovat potvrzení (Engulfing/Wick) na alespoň jednom z nižších TF (H1 nebo M30).
 
-```
-pip install --force-reinstall -r requirements.txt
-```
+**Filtr 6 — MSS Confluence**
+- Vyžaduje **Market Structure Shift**: Breakout předchozího swing bodu po vymetení likvidity (Sweep).
 
----
+**Filtr 7 — Continuation**
+- Cena nesmí být příliš natažená. Vstup by měl být blízko **Equilibrium** (50 % posledního pohybu) nebo doprovázen čerstvým FVG.
 
-## Nejčastější chyby
+### 6.2 Výpočet SL a TP (ATR Multipliers)
+Bot dynamicky počítá stop-loss a take-profit podle volatility.
+- **Stop-Loss:** `entry ± (ATR(14) * SL_MULTIPLIER)`.
+- **Take-Profit:** `entry ∓ (ATR(14) * TP_MULTIPLIER)`.
 
-| Problém               | Řešení                                         |
-| --------------------- | ---------------------------------------------- |
-| Bot nepřipojen k MT5  | špatné přihlášení nebo MT5 není spuštěn        |
-| Neobchoduje           | mimo session, spread, news filter, žádný setup |
-| Discord bot nereaguje | špatný token / chybí permissions               |
-| Pouze signály         | NOTIFY_ONLY=true                               |
-| MT5 dělá zvukové signály        | vypni zvuky MetaTraderu, jsou normální         |
-
----
-
-## FAQ
-
-**Q: Funguje na funded acc?**
-Ano. Stavěno pro trading všeobecně, pouze upravit .env.
-
-**Q: Umí hedging?**
-Ne. Standardní one-position risk model.
-
-**Q: Proč žádné obchody?**
-Ne každý den je validní confluence. To je záměr.
-
-**Q: Můžu přidat další páry?**
-Ano, úprava `.env → SYMBOLS`.
+### 6.3 Position sizing
+Risk je fixní % z equity. Velikost lotů se vypočítává tak, aby ztráta na SL přesně odpovídala zvolenému riziku s ohledem na `tick_value` daného instrumentu.
 
 ---
 
-## Bezpečnostní zásady
+## Sekce 7 — MSS strategie (Market Structure Shift)
 
-* nepoužívat martingale
-* nepoužívat na účtu bez SL
-* testovat 2–4 týdny
+#### 7.1 Detekce swing pointů
+Používá fraktálové pravidlo (window=2): Candle je Swing High, pokud má vyšší High než dvě svíčky před ní a dvě po ní.
 
+#### 7.2 Liquidity Sweep detekce
+Sleduje se včerejší nebo týdenní High/Low. Pokud cena prorazí toto High/Low, ale následně se uzavře zpět dovnitř, je to klasifikováno jako vymetení likvidity.
+
+#### 7.3 MSS potvrzení
+Kombinace Sweepu následovaného silným svíčkovým uzávěrem pod/nad opačným swing bodem. Toto signalizuje změnu nálady na trhu.
 
 ---
 
-## Licence
+## Sekce 8 — Risk Management systém
 
-Pouze pro osobní výzkum a výuku.
+#### 8.1 Hierarchie kontrol před vstupem
+Bot provádí kaskádu kontrol od globálních (session, trade enabled) přes rizikové (spread, drawdown) až po analytické (zóny, MSS). Pokud selže jediná, obchod není realizován.
 
+#### 8.2 Drawdown výpočty
+1. **Celkový**: Z `equity_start` uloženého v `state.json`.
+2. **Denní**: Kalkulováno synchronizací historických dealů v reálném čase.
+3. **Pauza**: Při dosažení limitů bot okamžitě uzavře pozice a zastaví otevírání nových na zbytek dne/týdne.
 
+---
+
+## Sekce 9 — Discord bot — příkazy reference
+
+| Příkaz | Admin? | Popis |
+|---|---|---|
+| `!status` | ne | Přehled účtu, PnL a MT5 zdraví. |
+| `!why` | ne | Diagnostika posledních zamítnutých signálů. |
+| `!trade live/notify` | ano | Přepínání mezi ostrým a notifikačním režimem. |
+| `!panic` | ano | Nouzové zavření všeho a zastavení bota. |
+| `!riskset X` | ano | Nastavení rizika v % za běhu. |
+| `!zones SYMBOL` | ne | Vygeneruje a pošle graf se zónami. |
+
+---
+
+## Sekce 10 — Spuštění a deployment
+
+### 10.1 Požadavky
+- Windows 10/11 (MT5 native requirement).
+- Python 3.10 nebo vyšší.
+- MetaTrader 5 terminál přihlášený k účtu.
+
+### 10.2 Spuštění
+Nejjednodušší spuštění je přes `start.bat`, který automaticky:
+1. Spustí MT5 terminál.
+2. Spustí hlavního bota (Python).
+3. Nastartuje Cloudflare tunnel pro přístup k dashboardu.
+
+---
+
+## Sekce 11 — Optimizer — Walk-Forward
+
+Optimizer běží v pozadí v samostatném vlákně. Používá historická data (3000 svíček) k nalezení ideální kombinace ATR multiplikátorů. Výsledek se aplikuje pouze tehdy, pokud prokáže stabilitu v Out-of-Sample okně (budoucí neznámá data) se Sharpe Ratiem nad 0.3 a win rate nad 35 %.
+
+---
+
+## Sekce 14 — Známé limitace a technický dluh
+
+1. **Konfigurace**: `load_config()` je voláno v každém modulu, což ztěžuje propagaci runtime změn, které se neuloží do `.env`.
+2. **Watchdog**: Při tvrdém restartu watchdogem se resetuje i počítadlo `equity_start`, což dočasně "vymaže" historii drawdownu pro daný den.
+3. **Risk Gates**: Pokud selže čtení CSV deníku, brána může v některých verzích povolit trading (fallback k `True`).
+4. **Drawdown limity**: Týdenní a měsíční limity jsou v configu, ale `risk_gates_ok` v aktuální verzi prioritizuje denní a celkový limit.
+5. **Async**: Míchání `asyncio.run()` v synchronní trading smyčce může způsobovat výpadky WebSocket spojení při dlouhých I/O operacích.
+6. **Cache**: `@lru_cache` na `fetch_rates` může způsobovat problémy při dynamických backtestech na datech, která se mění v reálném čase.
+7. **Multi-symbol Optimizer**: Optimizer v defaultu optimalizuje hlavní symbol, ale výsledná ATR nastavení se v této verzi aplikují globálně.
+8. **File System**: Mezery v názvech cest k projektu (`ftmo ukazka`) mohou způsobit pád batch skriptů.
+
+---
+
+## Sekce 15 — Bezpečnostní poznámky
+- Nikdy necommitujte soubor `.env` — obsahuje vaše MT5 a Discord klíče.
+- `BOT_OWNER_ID` v `.env` je klíčový — bez něj má k admin příkazům přístup každý administrátor vašeho Discord serveru.
+- Dashboard URL z Cloudflare tunnelu by měla zůstat soukromá.
